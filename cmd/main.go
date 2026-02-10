@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	rate "github.com/surajgoraicse/token-bucket/rate_v1"
+	rate "github.com/surajgoraicse/go-rate-limiter/rate_v1"
 )
 
 func main() {
