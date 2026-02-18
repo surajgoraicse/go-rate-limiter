@@ -1,15 +1,21 @@
-package ratev2
+package rate
 
 import (
 	"errors"
+	"fmt"
 	"net"
+	"net/http"
 	"sync"
 	"time"
+
+	"github.com/labstack/echo/v5"
 )
 
-var ErrInvalidIP = errors.New("invalid IP address")
-var ErrInvalidCap = errors.New("invalid capacity : cap should be greater than zero")
-var ErrInvalidRate = errors.New("invalid rate : rate should be greater than zero")
+var (
+	ErrInvalidIP   = errors.New("invalid IP address")
+	ErrInvalidCap  = errors.New("invalid capacity : cap should be greater than zero")
+	ErrInvalidRate = errors.New("invalid rate : rate should be greater than zero")
+)
 
 type bucket struct {
 	mu           sync.Mutex
@@ -20,13 +26,19 @@ type bucket struct {
 }
 
 type RateLimiter struct {
-	mu      sync.Mutex
-	cap     int
-	rate    float64
-	buckets map[string]*bucket
+	mu      sync.Mutex         // global mutex
+	cap     int                // capacity of the bucket
+	rate    float64            // rate of refill
+	buckets map[string]*bucket // key : ip , value : &bucket
 }
 
-func New(cap int, rate float64) (*RateLimiter, error) {
+type RateConfig struct {
+	Cap  int
+	Rate float64
+}
+
+// returns a new rate limiter instance
+func new(cap int, rate float64) (*RateLimiter, error) {
 	if cap <= 0 {
 		return nil, ErrInvalidCap
 	}
@@ -40,7 +52,8 @@ func New(cap int, rate float64) (*RateLimiter, error) {
 	}, nil
 }
 
-func (r *RateLimiter) Allow(ip string) (bool, error) {
+// returns true if the request is allowed
+func (r *RateLimiter) allow(ip string, c *echo.Context) (bool, error) {
 	parse := net.ParseIP(ip)
 	if parse == nil {
 		return false, ErrInvalidIP
@@ -71,10 +84,38 @@ func (r *RateLimiter) Allow(ip string) (bool, error) {
 		b.lastRefilled = time.Now()
 	}
 
+	c.Response().Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", r.cap))
+	c.Response().Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%.0f", b.token))
 	// send res
 	if b.token >= 1 {
 		b.token--
 		return true, nil
 	}
 	return false, nil
+}
+
+
+// echo rate limiter middleware
+func NewRateLimiter(config RateConfig) echo.MiddlewareFunc {
+	r, err := new(config.Cap, config.Rate)
+	if err != nil {
+		panic("rate limiter initialization failed : " + err.Error())
+	}
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c *echo.Context) error {
+			allow, err := r.allow(c.RealIP(), c)
+			if err != nil {
+				return c.JSON(http.StatusBadRequest, map[string]string{
+					"error": err.Error(),
+				})
+			}
+			if !allow {
+				return c.JSON(http.StatusTooManyRequests, map[string]string{
+					"error":   "rate_limit_exceeded",
+					"message": "Too many requests. Please try again later.",
+				})
+			}
+			return next(c)
+		}
+	}
 }

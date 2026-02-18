@@ -1,29 +1,37 @@
 package main
 
 import (
-	"fmt"
+	"net/http"
 	"os"
-	"time"
 
-	rate "github.com/surajgoraicse/go-rate-limiter/rate_v2"
+	"github.com/labstack/echo/v5"
+	"github.com/surajgoraicse/go-rate-limiter/rate"
 )
 
-func main() {
-	limiter, _ := rate.New(10, 1)
-	ip1 := "192.168.1.1"
-	for range 20 {
-
-		allow, err := limiter.Allow(ip1)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-		if allow {
-			fmt.Println("success")
-		} else {
-			fmt.Println("rate limmited")
-			time.Sleep(2 * time.Second)
-		}
+func getPort() string {
+	if len(os.Args) > 1 {
+		return ":" + os.Args[1]
 	}
-	fmt.Println("compleet....")
+	return ":8000"
+}
+
+func main() {
+
+	e := echo.New()
+	rateLimiter := rate.NewRateLimiter(rate.RateConfig{
+		Cap:  10,
+		Rate: 1,
+	})
+	e.Use(rateLimiter)
+
+	e.GET("/", func(c *echo.Context) error {
+		
+		return c.String(http.StatusOK, "Hello, World!")
+	})
+
+	if err := e.Start(getPort()); err != nil {
+		e.Logger.Error("failed to start server", "error", err)
+	} else {
+		e.Logger.Info("server is runnign at http://localhost:" + getPort())
+	}
 }
